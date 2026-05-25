@@ -155,7 +155,12 @@ try_recv :: proc(self: ^Listener, id: int, client: ^Client) {
 		if n == 0 {
 			kick(self, id)
 		} else {
-			packet_buffer_push(&client.packet_buf, self.buf[:n])
+			push_err := packet_buffer_push(&client.packet_buf, self.buf[:n])
+			if push_err == .Overflow {
+				kick(self, id)
+				return
+			}
+
 			handler :: proc(packet: []u8, ud: rawptr) {
 				ctx := (^PacketHandlerCtx)(ud)
 				ctx.listener.on_packet_received(ctx.id, packet)

@@ -65,7 +65,7 @@ listener_send_to_all :: proc "c" (L: ^lua.State) -> c.int {
 	self := get_listener(L)
 
 	length: c.size_t
-	str_ptr := lua.tolstring(L, 3, &length)
+	str_ptr := lua.tolstring(L, 2, &length)
 
 	if str_ptr != nil && length > 0 {
 		buf := ([^]u8)(str_ptr)[:length]
