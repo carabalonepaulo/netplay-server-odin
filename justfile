@@ -15,6 +15,7 @@ bundle: build
     @cp {{ out_path }} dist/
     @cp lua5.1.dll dist/ 2>/dev/null || cp bin/lua5.1.dll dist/ 2>/dev/null || true
     @cp .luarc.json dist/
+    @cp config.ini dist/
     @cp keeper.dll dist/
     @cp -r scripts dist/
     @rm -f {{ archive_name }}

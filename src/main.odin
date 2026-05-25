@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:os"
 import "core:sys/windows"
 
+import "config"
 import "network"
 import "scripting"
 
@@ -20,10 +21,19 @@ ctrl_c_handler :: proc "stdcall" (ctrl_type: windows.DWORD) -> windows.BOOL {
 }
 
 main :: proc() {
+	init_ok := config.init()
+	if !init_ok {
+		fmt.eprintln("failed to load config")
+		return
+	}
+
 	windows.SetConsoleCtrlHandler(ctrl_c_handler, true)
 	defer os.exit(1)
 
-	listener, err := network.init("0.0.0.0:5009")
+	addr := fmt.aprintf("0.0.0.0:%d", config.get().port)
+	defer delete(addr)
+
+	listener, err := network.init(addr)
 	if err != .None {
 		fmt.println("failed to init listener")
 		return
