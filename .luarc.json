@@ -1,0 +1,4 @@
+{
+  "diagnostics.globals": ["listener"],
+  "runtime.path": ["?.lua", "?/init.lua", "scripts/?.lua", "scripts/?/init.lua"]
+}
