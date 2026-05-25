@@ -38,6 +38,7 @@ deinit :: proc() {
 
 on_connected :: proc(id: int) {
 	if callbacks.on_client_connected <= 0 do return
+
 	lua.rawgeti(state, lua.REGISTRYINDEX, lua.Integer(callbacks.on_client_connected))
 	lua.pushinteger(state, lua.Integer(id))
 
@@ -48,7 +49,8 @@ on_connected :: proc(id: int) {
 }
 
 on_disconnected :: proc(id: int) {
-	if callbacks.on_client_connected <= 0 do return
+	if callbacks.on_client_disconnected <= 0 do return
+
 	lua.rawgeti(state, lua.REGISTRYINDEX, lua.Integer(callbacks.on_client_disconnected))
 	lua.pushinteger(state, lua.Integer(id))
 
