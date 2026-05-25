@@ -58,12 +58,12 @@ on_disconnected :: proc(id: int) {
 	}
 }
 
-on_packet_received :: proc(id: int, packet: cstring) {
+on_packet_received :: proc(id: int, packet: []u8) {
 	if callbacks.on_packet_received <= 0 do return
 
 	lua.rawgeti(state, lua.REGISTRYINDEX, lua.Integer(callbacks.on_packet_received))
 	lua.pushinteger(state, lua.Integer(id))
-	lua.pushstring(state, packet)
+	lua.pushlstring(state, cstring(raw_data(packet)), len(packet))
 
 	if lua.pcall(state, 2, 0, 0) != i32(lua.OK) {
 		fmt.eprintfln("failed to call on_packet_received: %s", lua.tostring(state, -1))

@@ -1,13 +1,8 @@
 package main
 
-import "core:bufio"
-import "core:container/queue"
 import "core:fmt"
-import "core:net"
 import "core:os"
 import "core:sys/windows"
-import "core:thread"
-import "core:time"
 
 import "network"
 import "scripting"
@@ -38,24 +33,12 @@ main :: proc() {
 	scripting.init(&listener)
 	defer scripting.deinit()
 
+	listener.on_connected_hook = scripting.on_connected
+	listener.on_disconnected_hook = scripting.on_disconnected
+	listener.on_packet_received = scripting.on_packet_received
+
 	for should_run {
 		network.poll(&listener)
-
-		for queue.len(listener.evs) > 0 {
-			ev := queue.pop_front(&listener.evs)
-
-			switch e in ev {
-			case network.Client_Connected_Event:
-				scripting.on_connected(e.id)
-			case network.Client_Disconnected_Event:
-				scripting.on_disconnected(e.id)
-			case network.Data_Received_Event:
-				scripting.on_packet_received(e.id, e.buf)
-			}
-
-			network.destroy(&ev)
-		}
-
 		scripting.poll()
 	}
 }

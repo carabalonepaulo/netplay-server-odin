@@ -1,14 +1,9 @@
 package network
 
-import "core:bufio"
-import "core:container/queue"
 import "core:fmt"
-import "core:io"
-import "core:mem"
 import "core:net"
-import "core:strings"
 
-import "../constants"
+MAX_CLIENTS :: 1024
 
 Init_Error :: enum {
 	None,
@@ -28,12 +23,18 @@ Client_Slot :: struct {
 	client: Client,
 }
 
+On_Connected_Hook :: proc(id: int)
+On_Disconnected_Hook :: proc(id: int)
+On_Packet_Received :: proc(id: int, buf: []u8)
+
 Listener :: struct {
-	evs:     Events,
-	ep:      net.Endpoint,
-	sock:    net.TCP_Socket,
-	clients: [constants.MAX_CLIENTS]Client_Slot,
-	buf:     [BUFFER_SIZE]u8,
+	ep:                   net.Endpoint,
+	sock:                 net.TCP_Socket,
+	clients:              [MAX_CLIENTS]Client_Slot,
+	buf:                  [BUFFER_SIZE]u8,
+	on_connected_hook:    On_Connected_Hook,
+	on_disconnected_hook: On_Disconnected_Hook,
+	on_packet_received:   On_Packet_Received,
 }
 
 init :: proc(endpoint_str: string) -> (listener: Listener, err: Init_Error) {
@@ -52,7 +53,6 @@ init :: proc(endpoint_str: string) -> (listener: Listener, err: Init_Error) {
 
 	listener.ep = ep
 	listener.sock = sock
-	queue.init(&listener.evs)
 
 	return
 }
@@ -95,7 +95,7 @@ kick :: proc(self: ^Listener, id: int) {
 		net.close(client.sock)
 		client^ = {}
 		self.clients[id].active = false
-		queue.push_back(&self.evs, Event(Client_Disconnected_Event{id = id}))
+		self.on_disconnected_hook(id)
 	}
 }
 
@@ -104,14 +104,6 @@ close :: proc(self: ^Listener) {
 		kick(self, i)
 	}
 	net.close(self.sock)
-}
-
-destroy :: proc(ev: ^Event) {
-	#partial switch e in ev {
-	case Data_Received_Event:
-		delete(e.buf)
-		return
-	}
 }
 
 @(private)
@@ -143,7 +135,7 @@ try_accept :: proc(self: ^Listener) {
 		packet_buffer_init(&client.packet_buf)
 		send_buffer_init(&client.send_buf)
 
-		queue.push_back(&self.evs, Event(Client_Connected_Event{id = idx}))
+		self.on_connected_hook(idx)
 	}
 }
 
@@ -166,13 +158,7 @@ try_recv :: proc(self: ^Listener, id: int, client: ^Client) {
 			packet_buffer_push(&client.packet_buf, self.buf[:n])
 			handler :: proc(packet: []u8, ud: rawptr) {
 				ctx := (^PacketHandlerCtx)(ud)
-				temp := string(packet)
-				cstr := strings.clone_to_cstring(temp)
-
-				queue.push_back(
-					&ctx.listener.evs,
-					Event(Data_Received_Event{id = ctx.id, buf = cstr}),
-				)
+				ctx.listener.on_packet_received(ctx.id, packet)
 			}
 
 			ctx := PacketHandlerCtx {
