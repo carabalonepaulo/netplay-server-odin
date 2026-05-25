@@ -161,17 +161,15 @@ try_recv :: proc(self: ^Listener, id: int, client: ^Client) {
 				return
 			}
 
-			handler :: proc(packet: []u8, ud: rawptr) {
-				ctx := (^PacketHandlerCtx)(ud)
-				ctx.listener.on_packet_received(ctx.id, packet)
-			}
+			for {
+				packet, consumed := packet_buffer_read(&client.packet_buf)
+				if consumed == 0 {
+					break
+				}
 
-			ctx := PacketHandlerCtx {
-				listener = self,
-				id       = id,
+				self.on_packet_received(id, packet)
+				packet_buffer_discard(&client.packet_buf, consumed)
 			}
-
-			for packet_buffer_read(&client.packet_buf, handler, &ctx) {}
 		}
 	case:
 		kick(self, id)

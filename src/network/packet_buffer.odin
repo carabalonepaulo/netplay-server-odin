@@ -15,8 +15,6 @@ Packet_Buffer :: struct {
 	pos: int,
 }
 
-Packet_Handler :: #type proc(packet: []u8, ud: rawptr)
-
 packet_buffer_init :: proc(self: ^Packet_Buffer) {
 	self.buf = new([BUFFER_SIZE]u8)
 	self.pos = 0
@@ -43,13 +41,9 @@ packet_buffer_push :: proc(self: ^Packet_Buffer, buf: []u8) -> Packet_Buffer_Err
 	return .None
 }
 
-packet_buffer_read :: proc(
-	self: ^Packet_Buffer,
-	handler: Packet_Handler,
-	ud: rawptr = nil,
-) -> bool {
+packet_buffer_read :: proc(self: ^Packet_Buffer) -> (packet: []u8, consumed: int) {
 	if self.pos == 0 {
-		return false
+		return nil, 0
 	}
 
 	newline_idx := -1
@@ -61,21 +55,21 @@ packet_buffer_read :: proc(
 	}
 
 	if newline_idx == -1 {
-		return false
+		return nil, 0
 	}
 
 	packet_size := newline_idx + 1
-	src_slice := self.buf[0:packet_size]
-	handler(src_slice, ud)
+	return self.buf[0:packet_size], packet_size
+}
 
-	remaining_bytes := self.pos - packet_size
+packet_buffer_discard :: proc(self: ^Packet_Buffer, consumed: int) {
+	if consumed <= 0 do return
+	remaining_bytes := self.pos - consumed
 	if remaining_bytes > 0 {
-		src_remaining := raw_data(self.buf[packet_size:self.pos])
+		src_remaining := raw_data(self.buf[consumed:self.pos])
 		dest_start := raw_data(self.buf[0:remaining_bytes])
 		mem.copy(dest_start, src_remaining, remaining_bytes)
 	}
-
 	self.pos = remaining_bytes
-	return true
 }
 
