@@ -36,28 +36,26 @@ Listener :: struct {
 	on_packet_received:   On_Packet_Received,
 }
 
-init :: proc(endpoint_str: string) -> (listener: Listener, err: Init_Error) {
+init :: proc(self: ^Listener, endpoint_str: string) -> Init_Error {
 	ep, ok := net.parse_endpoint(endpoint_str)
 	if !ok {
-		err = .Invalid_Endpoint
-		return
+		return .Invalid_Endpoint
 	}
 
 	sock, listen_err := net.listen_tcp(ep)
 	if listen_err != nil {
-		err = .Create_Socket_Failed
-		return
+		return .Create_Socket_Failed
 	}
 	net.set_blocking(sock, false)
 
-	listener.ep = ep
-	listener.sock = sock
+	self.ep = ep
+	self.sock = sock
 
 	cfg := config.get()
-	listener.clients = make([]Client_Slot, cfg.max_clients)
-	listener.buf = make([]u8, cfg.buffer_size)
+	self.clients = make([]Client_Slot, cfg.max_clients)
+	self.buf = make([]u8, cfg.buffer_size)
 
-	return
+	return .None
 }
 
 poll :: proc(self: ^Listener) {

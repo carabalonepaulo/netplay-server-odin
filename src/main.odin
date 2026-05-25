@@ -33,8 +33,9 @@ main :: proc() {
 	addr := fmt.aprintf("0.0.0.0:%d", config.get().port)
 	defer delete(addr)
 
-	listener, err := network.init(addr)
-	if err != .None {
+	listener: network.Listener
+	init_err := network.init(&listener, addr)
+	if init_err != .None {
 		fmt.println("failed to init listener")
 		return
 	}
