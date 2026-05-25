@@ -1,8 +1,7 @@
 package network
 
+import "../config"
 import "core:mem"
-
-BUFFER_SIZE :: 4096
 
 Packet_Buffer_Error :: enum {
 	None = 0,
@@ -11,18 +10,19 @@ Packet_Buffer_Error :: enum {
 }
 
 Packet_Buffer :: struct {
-	buf: ^[BUFFER_SIZE]u8,
+	buf: []u8,
 	pos: int,
 }
 
 packet_buffer_init :: proc(self: ^Packet_Buffer) {
-	self.buf = new([BUFFER_SIZE]u8)
+	cfg := config.get()
+	self.buf = make([]u8, cfg.buffer_size)
 	self.pos = 0
 }
 
 packet_buffer_destroy :: proc(self: ^Packet_Buffer) {
 	if self.buf != nil {
-		free(self.buf)
+		delete(self.buf)
 		self.buf = nil
 	}
 }
@@ -30,7 +30,7 @@ packet_buffer_destroy :: proc(self: ^Packet_Buffer) {
 packet_buffer_push :: proc(self: ^Packet_Buffer, buf: []u8) -> Packet_Buffer_Error {
 	if len(buf) == 0 do return .None
 
-	if self.pos + len(buf) > BUFFER_SIZE {
+	if self.pos + len(buf) > len(self.buf) {
 		return .Overflow
 	}
 

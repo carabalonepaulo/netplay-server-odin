@@ -1,9 +1,8 @@
 package network
 
+import "../config"
 import "core:fmt"
 import "core:net"
-
-MAX_CLIENTS :: 1024
 
 Init_Error :: enum {
 	None,
@@ -30,8 +29,8 @@ On_Packet_Received :: proc(id: int, buf: []u8)
 Listener :: struct {
 	ep:                   net.Endpoint,
 	sock:                 net.TCP_Socket,
-	clients:              [MAX_CLIENTS]Client_Slot,
-	buf:                  [BUFFER_SIZE]u8,
+	clients:              []Client_Slot,
+	buf:                  []u8,
 	on_connected_hook:    On_Connected_Hook,
 	on_disconnected_hook: On_Disconnected_Hook,
 	on_packet_received:   On_Packet_Received,
@@ -53,6 +52,10 @@ init :: proc(endpoint_str: string) -> (listener: Listener, err: Init_Error) {
 
 	listener.ep = ep
 	listener.sock = sock
+
+	cfg := config.get()
+	listener.clients = make([]Client_Slot, cfg.max_clients)
+	listener.buf = make([]u8, cfg.buffer_size)
 
 	return
 }
@@ -99,11 +102,13 @@ kick :: proc(self: ^Listener, id: int) {
 	}
 }
 
-close :: proc(self: ^Listener) {
+destroy :: proc(self: ^Listener) {
 	for _, i in self.clients {
 		kick(self, i)
 	}
 	net.close(self.sock)
+	delete(self.buf)
+	delete(self.clients)
 }
 
 @(private)

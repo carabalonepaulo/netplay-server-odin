@@ -41,11 +41,11 @@ init :: proc() -> bool {
 			continue
 		}
 
-		key_val := strings.split(trimmed, "=")
-		if len(key_val) != 2 do continue
+		idx := strings.index(trimmed, "=")
+		if idx < 0 do continue
 
-		key := strings.trim_space(key_val[0])
-		value := strings.trim_space(key_val[1])
+		key := strings.trim_space(trimmed[:idx])
+		value := strings.trim_space(trimmed[idx + 1:])
 
 		switch current_section {
 		case "listener":
@@ -67,8 +67,6 @@ init :: proc() -> bool {
 				}
 			}
 		}
-
-		delete(key_val)
 	}
 
 	return true

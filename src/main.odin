@@ -38,7 +38,7 @@ main :: proc() {
 		fmt.println("failed to init listener")
 		return
 	}
-	defer network.close(&listener)
+	defer network.destroy(&listener)
 
 	scripting.init(&listener)
 	defer scripting.deinit()
