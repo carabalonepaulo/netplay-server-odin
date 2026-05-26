@@ -5,9 +5,11 @@ import "core:strconv"
 import "core:strings"
 
 Config :: struct {
-	port:        int,
-	max_clients: int,
-	buffer_size: int,
+	port:          int,
+	max_clients:   int,
+	buffer_size:   int,
+	//
+	lua_main_path: cstring,
 }
 
 config := Config {
@@ -65,6 +67,11 @@ init :: proc() -> bool {
 				if ok {
 					config.buffer_size = val
 				}
+			}
+		case "lua":
+			switch key {
+			case "entry":
+				config.lua_main_path = strings.clone_to_cstring(value)
 			}
 		}
 	}

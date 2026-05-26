@@ -1,5 +1,6 @@
 package scripting
 
+import "../config"
 import "../network"
 import "base:runtime"
 import "core:fmt"
@@ -90,7 +91,7 @@ get_callback :: proc(L: ^lua.State, key: cstring) -> i32 {
 
 @(private)
 load_script :: proc(L: ^lua.State) -> bool {
-	if lua.L_dofile(L, "./scripts/main.lua") != i32(lua.OK) {
+	if lua.L_dofile(L, config.get().lua_main_path) != i32(lua.OK) {
 		fmt.eprintfln("failed to load script: %s", lua.tostring(L, -1))
 		lua.pop(L, 1)
 		return false
