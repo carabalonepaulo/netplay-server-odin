@@ -4,7 +4,8 @@ archive_name := "server.7z"
 
 run:
     @mkdir -p bin
-    @odin run src --out:{{ out_path }}
+    @odin build src --out:{{ out_path }} -collection:deps="./deps"
+    @-cd bin && ./{{binary_name}}
 
 build:
     @mkdir -p bin
@@ -17,6 +18,7 @@ bundle: build
     @cp .luarc.json dist/
     @cp config.ini dist/
     @cp keeper.dll dist/
+    @cp json.dll dist/
     @cp -r scripts dist/
     @rm -f {{ archive_name }}
     7z a -ttar -snl {{ archive_name }} ./dist/* > /dev/null
