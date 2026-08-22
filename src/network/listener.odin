@@ -161,7 +161,10 @@ poll :: proc(self: ^Listener) {
 
 		for {
 			idx := cb.index_of(&client.recv_buf, '\n')
-			if idx == -1 do break
+			if idx == -1 {
+				if client.recv_buf.wa == 0 do client.flags += {.Close_Now}
+				break
+			}
 
 			packet_len := idx + 1
 			if packet_len > len(self.temp) {
