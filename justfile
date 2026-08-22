@@ -9,7 +9,7 @@ run:
 
 build:
     @mkdir -p bin
-    @odin build src --out:{{ out_path }}
+    @odin build src --out:{{ out_path }} -collection:deps="./deps" -o:aggressive
 
 bundle: build
     @mkdir -p dist

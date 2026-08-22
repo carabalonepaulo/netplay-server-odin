@@ -7,31 +7,20 @@ import lua "vendor:lua/5.1"
 LISTENER_METATABLE :: "Network.Listener"
 
 register_listener :: proc(L: ^lua.State, listener: ^network.Listener) {
-	lua.L_newmetatable(L, LISTENER_METATABLE)
+	if lua.L_newmetatable(L, LISTENER_METATABLE) != 0 {
+		lua.pushvalue(L, -1)
+		lua.setfield(L, -2, "__index")
 
-	lua.pushvalue(L, -1)
-	lua.setfield(L, -2, "__index")
-
-	lua.pushstring(L, "send_to")
-	lua.pushcfunction(L, listener_send_to)
-	lua.settable(L, -3)
-
-	lua.pushstring(L, "send_to_many")
-	lua.pushcfunction(L, listener_send_to_many)
-	lua.settable(L, -3)
-
-	lua.pushstring(L, "send_to_all")
-	lua.pushcfunction(L, listener_send_to_all)
-	lua.settable(L, -3)
-
-	lua.pushstring(L, "kick")
-	lua.pushcfunction(L, listener_kick)
-	lua.settable(L, -3)
-
-	lua.pushstring(L, "kick_many")
-	lua.pushcfunction(L, listener_kick)
-	lua.settable(L, -3)
-
+		methods :: []lua.L_Reg {
+			{"send_to", listener_send_to},
+			{"send_to_many", listener_send_to_many},
+			{"send_to_all", listener_send_to_all},
+			{"kick", listener_kick},
+			{"kick_many", listener_kick_many},
+			{nil, nil},
+		}
+		lua.L_register(L, nil, raw_data(methods))
+	}
 	lua.pop(L, 1)
 
 	udata_ptr := (^^network.Listener)(lua.newuserdata(L, size_of(^network.Listener)))
@@ -40,7 +29,11 @@ register_listener :: proc(L: ^lua.State, listener: ^network.Listener) {
 	lua.L_getmetatable(L, LISTENER_METATABLE)
 	lua.setmetatable(L, -2)
 
-	lua.setglobal(L, "listener")
+	lua.getfield(L, lua.REGISTRYINDEX, "_LOADED")
+	lua.pushvalue(L, -2)
+	lua.setfield(L, -2, "listener")
+
+	lua.pop(L, 2)
 }
 
 get_listener :: #force_inline proc(L: ^lua.State) -> ^network.Listener {
