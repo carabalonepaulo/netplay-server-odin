@@ -1,81 +1,44 @@
 package config
 
+import "core:encoding/json"
 import "core:os"
-import "core:strconv"
-import "core:strings"
 
-Config :: struct {
-	port:          int,
-	max_clients:   int,
-	buffer_size:   int,
-	//
-	lua_main_path: cstring,
+Network_Config :: struct {
+	port:            int,
+	max_clients:     int,
+	max_packet_size: int,
 }
 
-config := Config {
-	port        = 5009,
-	max_clients = 256,
-	buffer_size = 4096,
+Lua_Config :: struct {
+	entry: string,
+}
+
+Config :: struct {
+	network: Network_Config,
+	lua:     Lua_Config,
+}
+
+_config := Config {
+	network = {port = 5009, max_clients = 256, max_packet_size = 1024},
+	lua = {entry = "scripts/main.lua"},
 }
 
 get :: #force_inline proc() -> ^Config {
-	return &config
+	return &_config
 }
 
-init :: proc() -> bool {
-	data, read_err := os.read_entire_file_from_path("./config.ini", context.allocator)
+load :: proc() -> (ok: bool) {
+	buf, read_err := os.read_entire_file("config.json", context.allocator)
 	if read_err != nil do return false
-	defer delete(data)
+	defer delete(buf)
 
-	content := string(data)
-	current_section := ""
-
-	for line in strings.split_lines_iterator(&content) {
-		trimmed := strings.trim_space(line)
-		if len(trimmed) == 0 ||
-		   strings.has_prefix(trimmed, ";") ||
-		   strings.has_prefix(trimmed, "#") {
-			continue
-		}
-
-		if strings.has_prefix(trimmed, "[") && strings.has_suffix(trimmed, "]") {
-			current_section = trimmed[1:len(trimmed) - 1]
-			continue
-		}
-
-		idx := strings.index(trimmed, "=")
-		if idx < 0 do continue
-
-		key := strings.trim_space(trimmed[:idx])
-		value := strings.trim_space(trimmed[idx + 1:])
-
-		switch current_section {
-		case "listener":
-			switch key {
-			case "port":
-				val, ok := strconv.parse_int(value)
-				if ok {
-					config.port = val
-				}
-			case "max_clients":
-				val, ok := strconv.parse_int(value)
-				if ok {
-					config.max_clients = val
-				}
-			case "buffer_size":
-				val, ok := strconv.parse_int(value)
-				if ok {
-					config.buffer_size = val
-				}
-			}
-		case "lua":
-			switch key {
-			case "entry":
-				config.lua_main_path = strings.clone_to_cstring(value)
-			}
-		}
-	}
+	json_err := json.unmarshal(buf, &_config)
+	if json_err != nil do return false
 
 	return true
+}
+
+unload :: proc() {
+	delete(_config.lua.entry)
 }
 

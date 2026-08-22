@@ -1,217 +1,334 @@
-package network
+package server_network
 
-import "../config"
+import "base:runtime"
+import "core:container/intrusive/list"
 import "core:fmt"
+import "core:mem"
+import "core:nbio"
 import "core:net"
 
-Init_Error :: enum {
-	None,
-	Invalid_Endpoint,
-	Create_Socket_Failed,
+import "../config"
+import cb "deps:circular_buffer"
+
+INDEX_BITS :: 16
+INDEX_MASK :: (1 << INDEX_BITS) - 1
+
+Callbacks :: struct {
+	client_connected:    proc(id: int),
+	client_disconnected: proc(id: int),
+	packet_received:     proc(id: int, buf: []u8),
 }
+
+Should_Close :: enum {
+	No,
+	Now,
+	Later,
+}
+
+Client_Flag :: enum {
+	Sending,
+	Receiving,
+	Close_Later,
+	Close_Now,
+}
+
+Client_Flags :: bit_set[Client_Flag]
 
 Client :: struct {
-	ep:         net.Endpoint,
-	sock:       net.TCP_Socket,
-	packet_buf: Packet_Buffer,
-	send_buf:   Send_Buffer,
+	id:       int,
+	sock:     nbio.TCP_Socket,
+	flags:    Client_Flags,
+	node:     list.Node,
+	send_buf: cb.Circular_Buffer,
+	recv_buf: cb.Circular_Buffer,
 }
-
-Client_Slot :: struct {
-	active: bool,
-	client: Client,
-}
-
-On_Connected_Hook :: proc(id: int)
-On_Disconnected_Hook :: proc(id: int)
-On_Packet_Received :: proc(id: int, buf: []u8)
 
 Listener :: struct {
-	ep:                   net.Endpoint,
-	sock:                 net.TCP_Socket,
-	clients:              []Client_Slot,
-	buf:                  []u8,
-	on_connected_hook:    On_Connected_Hook,
-	on_disconnected_hook: On_Disconnected_Hook,
-	on_packet_received:   On_Packet_Received,
+	sock:        nbio.TCP_Socket,
+	used_list:   list.List,
+	free_list:   list.List,
+	temp:        []u8,
+	clients_buf: []u8,
+	clients:     []Client,
+	callbacks:   Callbacks,
 }
 
-init :: proc(self: ^Listener, endpoint_str: string) -> Init_Error {
-	ep, ok := net.parse_endpoint(endpoint_str)
-	if !ok {
-		return .Invalid_Endpoint
+init :: proc(self: ^Listener, callbacks: Callbacks) -> (ok: bool) {
+	assert(callbacks.client_connected != nil)
+	assert(callbacks.client_disconnected != nil)
+	assert(callbacks.packet_received != nil)
+
+	n := &config.get().network
+
+	ep := nbio.Endpoint{net.IP4_Any, n.port}
+	sock, listen_err := nbio.listen_tcp(ep)
+	if listen_err != nil do return false
+
+	buf_size := n.max_packet_size * 2
+	total_size := (n.max_clients * buf_size * 2) + n.max_packet_size
+
+	clients_buf, buf_err := make([]u8, total_size)
+	if buf_err != nil do return false
+	defer if !ok do delete(clients_buf)
+
+	clients, clients_err := make([]Client, n.max_clients)
+	if clients_err != nil do return false
+	defer if !ok do delete(clients)
+
+	arena: mem.Arena
+	mem.arena_init(&arena, clients_buf)
+	arena_alloc := mem.arena_allocator(&arena)
+
+	for &c, i in clients {
+		c.id = pack_key(i, 1)
+		c.send_buf = cb.create(make([]u8, buf_size, arena_alloc))
+		c.recv_buf = cb.create(make([]u8, buf_size, arena_alloc))
+
+		list.push_back(&self.free_list, &c.node)
 	}
 
-	sock, listen_err := net.listen_tcp(ep)
-	if listen_err != nil {
-		return .Create_Socket_Failed
-	}
-	net.set_blocking(sock, false)
-
-	self.ep = ep
+	self.callbacks = callbacks
 	self.sock = sock
+	self.clients = clients
+	self.clients_buf = clients_buf
+	self.temp = make([]u8, n.max_packet_size, arena_alloc)
 
-	cfg := config.get()
-	self.clients = make([]Client_Slot, cfg.max_clients)
-	self.buf = make([]u8, cfg.buffer_size)
+	op := nbio.accept(self.sock, on_accept)
+	op.user_data[0] = self
 
-	return .None
+	return true
+}
+
+deinit :: proc(self: ^Listener) {
+	delete(self.clients_buf)
+	delete(self.clients)
 }
 
 poll :: proc(self: ^Listener) {
-	try_accept(self)
+	curr := self.used_list.head
+	for curr != nil {
+		next := curr.next
 
-	for &slot, i in self.clients {
-		if !slot.active {
+		client := container_of(curr, Client, "node")
+
+		no_io := (client.flags & {.Sending, .Receiving}) == {}
+		is_force := .Close_Now in client.flags
+		is_drain := .Close_Later in client.flags && client.send_buf.ra == 0
+
+		if (is_force || is_drain) && no_io {
+			nbio.close(client.sock)
+
+			list.remove(&self.used_list, &client.node)
+			list.push_back(&self.free_list, &client.node)
+
+			old_id := client.id
+			c_idx, c_gen := unpack_key(client.id)
+			client.id = pack_key(c_idx, c_gen + 1)
+			client.flags = {}
+			cb.clear(&client.send_buf)
+			cb.clear(&client.recv_buf)
+
+			self.callbacks.client_disconnected(old_id)
+
+			curr = next
 			continue
 		}
 
-		try_recv(self, i, &slot.client)
-		try_send(self, i, &slot.client)
+		if .Close_Now in client.flags {
+			curr = next
+			continue
+		}
+
+		if .Sending not_in client.flags {
+			buf := cb.peek_read(&client.send_buf)
+			if len(buf) > 0 {
+				op := nbio.send(client.sock, {buf}, on_send)
+				op.user_data[0] = self
+				op.user_data[1] = transmute(rawptr)(client.id)
+				client.flags += {.Sending}
+			}
+		}
+
+		if client.flags & {.Close_Later, .Receiving} == {} {
+			buf := cb.peek_write(&client.recv_buf)
+			if len(buf) > 0 {
+				client.flags += {.Receiving}
+				op := nbio.recv(client.sock, {buf}, on_recv)
+				op.user_data[0] = self
+				op.user_data[1] = transmute(rawptr)(client.id)
+			}
+		}
+
+		for {
+			idx := cb.index_of(&client.recv_buf, '\n')
+			if idx == -1 do break
+
+			packet_len := idx + 1
+			if packet_len > len(self.temp) {
+				client.flags += {.Close_Now}
+				break
+			}
+
+			dst := self.temp[:idx + 1]
+			cb.read(&client.recv_buf, dst)
+
+			self.callbacks.packet_received(client.id, dst)
+		}
+
+		curr = next
 	}
 }
 
-
 send_to :: proc(self: ^Listener, id: int, buf: []u8) {
-	if id < 0 || id >= len(self.clients) || !self.clients[id].active {
-		return
+	idx, gen := unpack_key(id)
+
+	if idx < 0 || idx >= len(self.clients) do return
+	client := &self.clients[idx]
+
+	c_idx, c_gen := unpack_key(client.id)
+	if gen != c_gen do return
+
+	cb.write(&client.send_buf, buf)
+}
+
+send_to_many :: proc(
+	self: ^Listener,
+	buf: []u8,
+	ud: rawptr,
+	filter: proc(id: int, ud: rawptr) -> bool,
+) {
+	curr := self.used_list.head
+	for curr != nil {
+		client := container_of(curr, Client, "node")
+		active := client.flags & {.Close_Now, .Close_Later} == {}
+		if active && filter(client.id, ud) do cb.write(&client.send_buf, buf)
+		curr = curr.next
 	}
-	send_buffer_push(&self.clients[id].client.send_buf, buf)
 }
 
 send_to_all :: proc(self: ^Listener, buf: []u8) {
-	for &slot, _ in self.clients {
-		if !slot.active {
-			continue
-		}
-		send_buffer_push(&slot.client.send_buf, buf)
+	curr := self.used_list.head
+	for curr != nil {
+		client := container_of(curr, Client, "node")
+		active := client.flags & {.Close_Now, .Close_Later} == {}
+		if active do cb.write(&client.send_buf, buf)
+		curr = curr.next
 	}
 }
 
 kick :: proc(self: ^Listener, id: int) {
-	if self.clients[id].active {
-		client := &self.clients[id].client
-		send_buffer_destroy(&client.send_buf)
-		packet_buffer_destroy(&client.packet_buf)
-		net.close(client.sock)
-		client^ = {}
-		self.clients[id].active = false
-		self.on_disconnected_hook(id)
+	idx, gen := unpack_key(id)
+
+	if idx < 0 || idx >= len(self.clients) do return
+	client := &self.clients[idx]
+
+	c_idx, c_gen := unpack_key(client.id)
+	if gen != c_gen do return
+
+	client.flags += {.Close_Later}
+}
+
+kick_many :: proc(self: ^Listener, ud: rawptr, filter: proc(id: int, ud: rawptr) -> bool) {
+	curr := self.used_list.head
+	for curr != nil {
+		client := container_of(curr, Client, "node")
+		if filter(client.id, ud) do client.flags += {.Close_Later}
+		curr = curr.next
 	}
 }
 
-destroy :: proc(self: ^Listener) {
-	for _, i in self.clients {
-		kick(self, i)
+@(private = "file")
+on_accept :: proc(op: ^nbio.Operation) {
+	self := (^Listener)(op.user_data[0])
+	should_accept := true
+	defer if should_accept {
+		op := nbio.accept(self.sock, on_accept)
+		op.user_data[0] = self
 	}
-	net.close(self.sock)
-	delete(self.buf)
-	delete(self.clients)
-}
 
-@(private)
-try_accept :: proc(self: ^Listener) {
-	client_sock, client_ep, accept_err := net.accept_tcp(self.sock)
-	if accept_err == .None {
-		idx := find_empty_slot(self.clients[:])
-		if idx == -1 {
-			fmt.println("can't accept clients, limit reached")
-			net.close(client_sock)
-			return
-		}
-
-		block_err := net.set_blocking(client_sock, false)
-		if block_err != nil {
-			fmt.println("[panic] failed to set socket as non blocking")
-			net.close(client_sock)
-			return
-		}
-
-		net.set_option(client_sock, .TCP_Nodelay, true)
-
-		self.clients[idx].active = true
-		client := &self.clients[idx].client
-
-		client.ep = client_ep
-		client.sock = client_sock
-
-		packet_buffer_init(&client.packet_buf)
-		send_buffer_init(&client.send_buf)
-
-		self.on_connected_hook(idx)
-	}
-}
-
-PacketHandlerCtx :: struct {
-	listener: ^Listener,
-	id:       int,
-}
-
-@(private)
-try_recv :: proc(self: ^Listener, id: int, client: ^Client) {
-	n, recv_err := net.recv_tcp(client.sock, self.buf[:])
-
-	#partial switch recv_err {
-	case .Would_Block:
+	if op.accept.err != .None {
+		fmt.println(op.accept.err)
+		should_accept = op.accept.err == .Aborted
 		return
-	case nil:
-		if n == 0 {
-			kick(self, id)
-		} else {
-			push_err := packet_buffer_push(&client.packet_buf, self.buf[:n])
-			if push_err == .Overflow {
-				kick(self, id)
-				return
-			}
+	}
 
-			for {
-				packet, consumed := packet_buffer_read(&client.packet_buf)
-				if consumed == 0 {
-					break
-				}
+	node := list.pop_front(&self.free_list)
+	if node == nil {
+		nbio.close(op.accept.socket)
+		return
+	}
+	list.push_back(&self.used_list, node)
 
-				self.on_packet_received(id, packet)
-				packet_buffer_discard(&client.packet_buf, consumed)
-			}
-		}
-	case:
-		kick(self, id)
+	client := container_of(node, Client, "node")
+	client.sock = op.accept.client
+	client.flags = {.Receiving}
+	cb.clear(&client.send_buf)
+	cb.clear(&client.recv_buf)
+
+	op := nbio.recv(client.sock, {cb.peek_write(&client.recv_buf)}, on_recv)
+	op.user_data[0] = self
+	op.user_data[1] = transmute(rawptr)(client.id)
+
+	self.callbacks.client_connected(client.id)
+}
+
+@(private = "file")
+on_recv :: proc(op: ^nbio.Operation) {
+	self := (^Listener)(op.user_data[0])
+	id := transmute(int)(op.user_data[1])
+
+	idx, gen := unpack_key(id)
+	client := &self.clients[idx]
+
+	c_idx, c_gen := unpack_key(client.id)
+	if gen != c_gen do return
+
+	client.flags -= {.Receiving}
+
+	if op.recv.err != nil || op.recv.received == 0 {
+		client.flags += {.Close_Now}
+		return
+	}
+
+	cb.commit_write(&client.recv_buf, op.recv.received)
+
+	write_buf := cb.peek_write(&client.recv_buf)
+	if len(write_buf) > 0 {
+		client.flags += {.Receiving}
+		op := nbio.recv(client.sock, {write_buf}, on_recv)
+		op.user_data[0] = self
+		op.user_data[1] = transmute(rawptr)(client.id)
 	}
 }
 
-@(private)
-try_send :: proc(self: ^Listener, id: int, client: ^Client) {
-	for {
-		chunk := send_buffer_peek(&client.send_buf)
-		if len(chunk) == 0 {
-			break
-		}
+@(private = "file")
+on_send :: proc(op: ^nbio.Operation) {
+	self := (^Listener)(op.user_data[0])
+	id := transmute(int)(op.user_data[1])
 
-		n, send_err := net.send_tcp(client.sock, chunk)
-		if n > 0 {
-			send_buffer_roll(&client.send_buf, n)
-		}
+	idx, gen := unpack_key(id)
+	client := &self.clients[idx]
 
-		if send_err == .Would_Block {
-			break
-		} else if send_err != nil {
-			kick(self, id)
-			break
-		}
+	c_idx, c_gen := unpack_key(client.id)
+	if gen != c_gen do return
 
-		if n < len(chunk) {
-			break
-		}
+	client.flags -= {.Sending}
+
+	if op.send.err != nil {
+		client.flags += {.Close_Now}
+		return
 	}
+
+	cb.commit_read(&client.send_buf, op.send.sent)
 }
 
 @(private)
-find_empty_slot :: proc(clients: []Client_Slot) -> int {
-	for &client, i in clients {
-		if !client.active {
-			return i
-		}
-	}
-	return -1
+pack_key :: #force_inline proc(idx: int, gen: int) -> int {
+	return ((gen & INDEX_MASK) << INDEX_BITS) | (idx & INDEX_MASK)
+}
+
+@(private)
+unpack_key :: #force_inline proc(key: int) -> (idx: int, gen: int) {
+	return key & INDEX_MASK, (key >> INDEX_BITS) & INDEX_MASK
 }
 

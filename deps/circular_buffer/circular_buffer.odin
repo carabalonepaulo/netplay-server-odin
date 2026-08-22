@@ -138,11 +138,10 @@ index_of_byte_at :: proc(self: ^Circular_Buffer, b: u8, offset: int) -> int {
 	return -1
 }
 
-peek_read :: proc(self: ^Circular_Buffer) -> (buf: []u8, ok: bool) {
-	if self.ra == 0 do return nil, false
+peek_read :: proc(self: ^Circular_Buffer) -> []u8 {
 	n := min(self.ra, len(self.buf) - self.rc)
 	#no_bounds_check {
-		return self.buf[self.rc:self.rc + n], true
+		return self.buf[self.rc:self.rc + n]
 	}
 }
 
@@ -152,11 +151,10 @@ commit_read :: proc(self: ^Circular_Buffer, n: int) -> (ok: bool) {
 	return true
 }
 
-peek_write :: proc(self: ^Circular_Buffer) -> (buf: []u8, ok: bool) {
-	if self.wa == 0 do return nil, false
+peek_write :: proc(self: ^Circular_Buffer) -> []u8 {
 	n := min(self.wa, len(self.buf) - self.wc)
 	#no_bounds_check {
-		return self.buf[self.wc:self.wc + n], true
+		return self.buf[self.wc:self.wc + n]
 	}
 }
 
@@ -308,8 +306,7 @@ test_peek_and_discard :: proc(t: ^testing.T) {
 
 	write(&cb, []u8{10, 20, 30, 40, 50, 60})
 
-	chunk, ok_p := peek_read(&cb)
-	testing.expect(t, ok_p)
+	chunk := peek_read(&cb)
 	testing.expect_value(t, len(chunk), 6)
 	testing.expect_value(t, chunk[0], 10)
 
@@ -317,7 +314,7 @@ test_peek_and_discard :: proc(t: ^testing.T) {
 	testing.expect(t, ok_d)
 	testing.expect_value(t, cb.ra, 4)
 
-	chunk2, _ := peek_read(&cb)
+	chunk2 := peek_read(&cb)
 	testing.expect_value(t, len(chunk2), 4)
 	testing.expect_value(t, chunk2[0], 30)
 
@@ -340,8 +337,7 @@ test_peek_discard_wrap_around :: proc(t: ^testing.T) {
 	write(&cb, []u8{70, 80, 90, 100, 110})
 	testing.expect_value(t, cb.ra, 6)
 
-	chunk1, ok1 := peek_read(&cb)
-	testing.expect(t, ok1)
+	chunk1 := peek_read(&cb)
 	testing.expect_value(t, len(chunk1), 3)
 	testing.expect_value(t, chunk1[0], 60)
 	testing.expect_value(t, chunk1[1], 70)
@@ -351,8 +347,7 @@ test_peek_discard_wrap_around :: proc(t: ^testing.T) {
 	testing.expect_value(t, cb.rc, 0)
 	testing.expect_value(t, cb.ra, 3)
 
-	chunk2, ok2 := peek_read(&cb)
-	testing.expect(t, ok2)
+	chunk2 := peek_read(&cb)
 	testing.expect_value(t, len(chunk2), 3)
 	testing.expect_value(t, chunk2[0], 90)
 	testing.expect_value(t, chunk2[1], 100)
@@ -376,8 +371,7 @@ test_peek_commit_write_wrap_around :: proc(t: ^testing.T) {
 	testing.expect_value(t, cb.rc, 4)
 	testing.expect_value(t, cb.ra, 1)
 
-	chunk1, ok1 := peek_write(&cb)
-	testing.expect(t, ok1)
+	chunk1 := peek_write(&cb)
 	testing.expect_value(t, len(chunk1), 3)
 
 	chunk1[0] = 60
@@ -388,8 +382,7 @@ test_peek_commit_write_wrap_around :: proc(t: ^testing.T) {
 	testing.expect_value(t, cb.wc, 0)
 	testing.expect_value(t, cb.ra, 4)
 
-	chunk2, ok2 := peek_write(&cb)
-	testing.expect(t, ok2)
+	chunk2 := peek_write(&cb)
 	testing.expect_value(t, len(chunk2), 4)
 
 	chunk2[0] = 90

@@ -1,54 +1,46 @@
-package main
+package server
 
 import "core:fmt"
+import "core:math"
+import "core:math/bits"
+import "core:nbio"
 import "core:os"
 import "core:sys/windows"
+import "core:time"
 
 import "config"
 import "network"
 import "scripting"
 
-should_run := true
-
-ctrl_c_handler :: proc "stdcall" (ctrl_type: windows.DWORD) -> windows.BOOL {
-	switch ctrl_type {
-	case windows.CTRL_C_EVENT, windows.CTRL_CLOSE_EVENT:
-		should_run = false
-		windows.Sleep(1000)
-		return windows.TRUE
-	}
-	return windows.FALSE
-}
+import "deps:ctrl_c"
 
 main :: proc() {
-	init_ok := config.init()
-	if !init_ok {
-		fmt.eprintln("failed to load config")
-		return
+	assert(config.load(), "failed to load config")
+	defer config.unload()
+
+	nbio.acquire_thread_event_loop()
+	defer nbio.release_thread_event_loop()
+
+	max_clients := config.get().network.max_clients
+	assert(max_clients > 0 && max_clients <= bits.U16_MAX)
+
+	ctrl_c.hook()
+
+	callbacks := network.Callbacks {
+		client_connected    = scripting.on_connected,
+		client_disconnected = scripting.on_disconnected,
+		packet_received     = scripting.on_packet_received,
 	}
-
-	windows.SetConsoleCtrlHandler(ctrl_c_handler, true)
-	defer os.exit(1)
-
-	addr := fmt.aprintf("0.0.0.0:%d", config.get().port)
-	defer delete(addr)
 
 	listener: network.Listener
-	init_err := network.init(&listener, addr)
-	if init_err != .None {
-		fmt.println("failed to init listener")
-		return
-	}
-	defer network.destroy(&listener)
+	assert(network.init(&listener, callbacks), "failed to init listener")
+	defer network.deinit(&listener)
 
 	scripting.init(&listener)
 	defer scripting.deinit()
 
-	listener.on_connected_hook = scripting.on_connected
-	listener.on_disconnected_hook = scripting.on_disconnected
-	listener.on_packet_received = scripting.on_packet_received
-
-	for should_run {
+	for !ctrl_c.should_quit() {
+		nbio.tick(5 * time.Millisecond)
 		network.poll(&listener)
 		scripting.poll()
 	}
