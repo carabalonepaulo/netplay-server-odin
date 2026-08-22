@@ -18,6 +18,7 @@ Config :: struct {
 	lua:     Lua_Config,
 }
 
+@(private)
 _config := Config {
 	network = {port = 5009, max_clients = 256, max_packet_size = 1024},
 	lua = {entry = "scripts/main.lua"},

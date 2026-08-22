@@ -1,12 +1,7 @@
 package server
 
-import "core:fmt"
-import "core:math"
 import "core:math/bits"
 import "core:nbio"
-import "core:os"
-import "core:sys/windows"
-import "core:time"
 
 import "config"
 import "network"
@@ -40,7 +35,7 @@ main :: proc() {
 	defer scripting.deinit()
 
 	for !ctrl_c.should_quit() {
-		nbio.tick(5 * time.Millisecond)
+		nbio.tick(0)
 		network.poll(&listener)
 		scripting.poll()
 	}
