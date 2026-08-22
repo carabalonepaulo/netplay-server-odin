@@ -2,7 +2,6 @@ package server_network
 
 import "base:runtime"
 import "core:container/intrusive/list"
-import "core:fmt"
 import "core:mem"
 import "core:nbio"
 import "core:net"
@@ -250,7 +249,6 @@ on_accept :: proc(op: ^nbio.Operation) {
 	}
 
 	if op.accept.err != .None {
-		fmt.println(op.accept.err)
 		should_accept = op.accept.err == .Aborted
 		return
 	}

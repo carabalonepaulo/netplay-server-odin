@@ -16,6 +16,10 @@ register_listener :: proc(L: ^lua.State, listener: ^network.Listener) {
 	lua.pushcfunction(L, listener_send_to)
 	lua.settable(L, -3)
 
+	lua.pushstring(L, "send_to_many")
+	lua.pushcfunction(L, listener_send_to_many)
+	lua.settable(L, -3)
+
 	lua.pushstring(L, "send_to_all")
 	lua.pushcfunction(L, listener_send_to_all)
 	lua.settable(L, -3)
@@ -56,6 +60,37 @@ listener_send_to :: proc "c" (L: ^lua.State) -> c.int {
 		buf := ([^]u8)(str_ptr)[:length]
 		network.send_to(self, id, buf)
 	}
+
+	return 0
+}
+
+listener_send_to_many :: proc "c" (L: ^lua.State) -> c.int {
+	context = main_ctx
+	self := get_listener(L)
+
+	lua.L_checktype(L, 2, c.int(lua.Type.STRING))
+	lua.L_checktype(L, 3, c.int(lua.Type.FUNCTION))
+
+	str_len: c.size_t
+	str_ptr := lua.tolstring(L, 2, &str_len)
+	if str_ptr == nil || str_len == 0 do return 0
+
+	buf := ([^]u8)(str_ptr)[:str_len]
+
+	filter :: proc(id: int, L: ^lua.State) -> bool {
+		lua.pushvalue(L, 3)
+		lua.pushnumber(L, lua.Number(id))
+
+		if lua.pcall(L, 1, 1, 0) != 0 {
+			lua.pop(L, 1)
+			return false
+		}
+
+		result := bool(lua.toboolean(L, -1))
+		lua.pop(L, 1)
+		return result
+	}
+	network.send_to_many(self, buf, L, auto_cast filter)
 
 	return 0
 }
