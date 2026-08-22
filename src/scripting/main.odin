@@ -5,6 +5,7 @@ import "../network"
 import "base:runtime"
 import "core:fmt"
 import "core:strings"
+import "deps:keeper"
 import lua "vendor:lua/5.1"
 
 Callbacks :: struct {
@@ -20,13 +21,14 @@ main_ctx: runtime.Context
 state: ^lua.State
 callbacks: Callbacks
 
-init :: proc(listener: ^network.Listener) {
+init :: proc(listener: ^network.Listener, cache: ^keeper.Keeper) {
 	main_ctx = context
 
 	state = lua.L_newstate()
 	lua.L_openlibs(state)
 
 	register_listener(state, listener)
+	register_cache(state, cache)
 
 	if load_script(state) {
 		call_void_callback(callbacks.on_init)

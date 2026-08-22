@@ -3,6 +3,14 @@ package config
 import "core:encoding/json"
 import "core:os"
 
+Cache_Config :: struct {
+	dir:              string,
+	cleanup_interval: int,
+	max_ram:          int,
+	max_permits:      int,
+	max_tasks:        int,
+}
+
 Network_Config :: struct {
 	port:            int,
 	max_clients:     int,
@@ -14,6 +22,7 @@ Lua_Config :: struct {
 }
 
 Config :: struct {
+	cache:   Cache_Config,
 	network: Network_Config,
 	lua:     Lua_Config,
 }
@@ -41,5 +50,6 @@ load :: proc() -> (ok: bool) {
 
 unload :: proc() {
 	delete(_config.lua.entry)
+	delete(_config.cache.dir)
 }
 
