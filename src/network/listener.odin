@@ -182,15 +182,8 @@ poll :: proc(self: ^Listener) {
 }
 
 send_to :: proc(self: ^Listener, id: int, buf: []u8) {
-	idx, gen := unpack_key(id)
-
-	if idx < 0 || idx >= len(self.clients) do return
-	client := &self.clients[idx]
-
-	c_idx, c_gen := unpack_key(client.id)
-	if gen != c_gen do return
-
-	cb.write(&client.send_buf, buf)
+	client := get_client(self.clients, id)
+	if client != nil do cb.write(&client.send_buf, buf)
 }
 
 send_to_many :: proc(
@@ -219,15 +212,8 @@ send_to_all :: proc(self: ^Listener, buf: []u8) {
 }
 
 kick :: proc(self: ^Listener, id: int) {
-	idx, gen := unpack_key(id)
-
-	if idx < 0 || idx >= len(self.clients) do return
-	client := &self.clients[idx]
-
-	c_idx, c_gen := unpack_key(client.id)
-	if gen != c_gen do return
-
-	client.flags += {.Close_Later}
+	client := get_client(self.clients, id)
+	if client != nil do client.flags += {.Close_Later}
 }
 
 kick_many :: proc(self: ^Listener, ud: rawptr, filter: proc(id: int, ud: rawptr) -> bool) {
@@ -278,12 +264,8 @@ on_recv :: proc(op: ^nbio.Operation) {
 	self := (^Listener)(op.user_data[0])
 	id := transmute(int)(op.user_data[1])
 
-	idx, gen := unpack_key(id)
-	client := &self.clients[idx]
-
-	c_idx, c_gen := unpack_key(client.id)
-	if gen != c_gen do return
-
+	client := get_client(self.clients, id)
+	if client == nil do return
 	client.flags -= {.Receiving}
 
 	if op.recv.err != nil || op.recv.received == 0 {
@@ -307,12 +289,8 @@ on_send :: proc(op: ^nbio.Operation) {
 	self := (^Listener)(op.user_data[0])
 	id := transmute(int)(op.user_data[1])
 
-	idx, gen := unpack_key(id)
-	client := &self.clients[idx]
-
-	c_idx, c_gen := unpack_key(client.id)
-	if gen != c_gen do return
-
+	client := get_client(self.clients, id)
+	if client == nil do return
 	client.flags -= {.Sending}
 
 	if op.send.err != nil {
@@ -331,5 +309,20 @@ pack_key :: #force_inline proc(idx: int, gen: int) -> int {
 @(private)
 unpack_key :: #force_inline proc(key: int) -> (idx: int, gen: int) {
 	return key & INDEX_MASK, (key >> INDEX_BITS) & INDEX_MASK
+}
+
+@(private)
+get_client :: #force_inline proc(clients: []Client, id: int) -> (client: ^Client) {
+	idx, gen := unpack_key(id)
+	if idx < 0 || idx >= len(clients) do return nil
+
+	#no_bounds_check {
+		client = &clients[idx]
+	}
+
+	c_gen := (client.id >> INDEX_BITS) & INDEX_MASK
+	if gen != c_gen do return nil
+
+	return client
 }
 
