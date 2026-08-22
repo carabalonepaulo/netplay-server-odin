@@ -28,6 +28,10 @@ register_listener :: proc(L: ^lua.State, listener: ^network.Listener) {
 	lua.pushcfunction(L, listener_kick)
 	lua.settable(L, -3)
 
+	lua.pushstring(L, "kick_many")
+	lua.pushcfunction(L, listener_kick)
+	lua.settable(L, -3)
+
 	lua.pop(L, 1)
 
 	udata_ptr := (^^network.Listener)(lua.newuserdata(L, size_of(^network.Listener)))
@@ -39,12 +43,8 @@ register_listener :: proc(L: ^lua.State, listener: ^network.Listener) {
 	lua.setglobal(L, "listener")
 }
 
-get_listener :: proc(L: ^lua.State) -> ^network.Listener {
+get_listener :: #force_inline proc(L: ^lua.State) -> ^network.Listener {
 	ptr := lua.L_checkudata(L, 1, LISTENER_METATABLE)
-	if ptr == nil {
-		lua.pushstring(L, "expected Listener userdata")
-		lua.error(L)
-	}
 	return (^^network.Listener)(ptr)^
 }
 
@@ -116,6 +116,29 @@ listener_kick :: proc "c" (L: ^lua.State) -> c.int {
 	id := int(lua.L_checknumber(L, 2))
 
 	network.kick(self, id)
+	return 0
+}
+
+listener_kick_many :: proc "c" (L: ^lua.State) -> c.int {
+	context = main_ctx
+	self := get_listener(L)
+	lua.L_checktype(L, 2, c.int(lua.Type.FUNCTION))
+
+	filter :: proc(id: int, L: ^lua.State) -> bool {
+		lua.pushvalue(L, 2)
+		lua.pushnumber(L, lua.Number(id))
+
+		if lua.pcall(L, 1, 1, 0) != 0 {
+			lua.pop(L, 1)
+			return false
+		}
+
+		result := bool(lua.toboolean(L, -1))
+		lua.pop(L, 1)
+		return result
+	}
+	network.kick_many(self, L, auto_cast filter)
+
 	return 0
 }
 
